@@ -1,5 +1,6 @@
 import numpy as np
-
+from nnfs.datasets import spiral_data
+import nnfs
 np.random.seed(0)
 # X is the Norm for naming training data
 X = [[1, 2, 3, 2.5],
@@ -14,16 +15,19 @@ class LayerDense:
     def forward(self, inputs):
         self.output = np.dot(inputs, self.weights) + self.biases
 
-
 layer1 = LayerDense(4, 5)
 #has to have 5 as n_inputs since layer 1 has 5 neurons
 layer2 = LayerDense(5, 2)
-
 layer1.forward(X)
-print(layer1.output)
-print()
 layer2.forward(layer1.output)
 print(layer2.output)
+print()
+nnfs.init()
+X, y = spiral_data(samples=100, classes=3)
+dense1 = LayerDense(2, 3)
+dense1.forward(X)
+# The first 5 out of 100
+print(dense1.output[:5])
 
 
 
