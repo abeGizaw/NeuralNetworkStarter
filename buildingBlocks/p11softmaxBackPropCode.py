@@ -16,3 +16,8 @@ print(np.dot(softmax_output, softmax_output.T))
 
 # Combining
 print(np.diagflat(softmax_output) - np.dot(softmax_output, softmax_output.T))
+
+
+y_true = np.array([[1,0,0], [0,0,1],[0,1,0]])
+print(np.argmax(y_true, axis =1))
+

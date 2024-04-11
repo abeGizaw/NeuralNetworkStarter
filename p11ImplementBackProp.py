@@ -43,32 +43,37 @@ class ActivationReLU:
     def backward(self, dvalues):
         self.dinputs = dvalues.copy()
         self.dinputs[self.inputs <= 0] = 0
-    	
+
 
 
 class ActivationSoftmax:
     def __init__(self):
+        self.dinputs = None
         self.output = None
 
     def forward(self, inputs):
+        # un-normalized probabilities
         exp_values = np.exp(inputs - np.max(inputs, axis=1, keepdims=True))
+        
+        # Normalize for each sample
         probabilities = exp_values/np.sum(exp_values, axis=1, keepdims=True)
         self.output = probabilities
 
     def backward(self, dvalues):
-		# Create uninitalized array. Note dvalues is 2D
-    	self.dinputs = np.empty_like(dvalues)
+        # Create uninitialized array. Note dvalues is 2D
+        self.dinputs = np.empty_like(dvalues)
 
-		# Enumerate outputs and gradients
-    	for index, (single_output, single_dvalues) in enumerate(zip(self.output, dvalues)):
-    		# Flatten output array 
-    		single_output = single_output.reshape(-1, 1)
+        # Enumerate outputs and gradients
+        for index, (single_output, single_dvalues) in enumerate(zip(self.output, dvalues)):
+            # Flatten output array
+            single_output = single_output.reshape(-1, 1)
 
-    		# Softmax jacobian array
-    		jacobian_matrix = np.diagflat(single_output) - np.dot(single_output, single_output.T)
+            # Softmax jacobian array
+            jacobian_matrix = np.diagflat(single_output) - np.dot(single_output, single_output.T)
 
-    		# Calculate sample-wise gradient and add it to the array of sample gradients
-    		self.dinputs[index] = np.dot(jacobian_matrix, single_dvalues)
+            # Calculate sample-wise gradient and add it to the array of sample gradients.
+            # single_dvalues is a vector
+            self.dinputs[index] = np.dot(jacobian_matrix, single_dvalues)
 
 
 class Loss:
@@ -88,9 +93,12 @@ class LossCategoricalCrossEntropy(Loss):
 
     def forward(self, y_pred, y_true):
         samples = len(y_pred)
+
+        # Clip data to prevent division by 0 and
+        # dragging the mean towards a certain value
         y_pred_clipped = np.clip(y_pred, 1e-7, 1-1e-7)
 
-        # Sparse
+        # Sparse (Categorical) 
         if len(y_true.shape) == 1:
             # [[0,1,2], [y_true]]
             correct_conf = y_pred_clipped[range(samples), y_true]
@@ -120,3 +128,34 @@ class LossCategoricalCrossEntropy(Loss):
         # Normalize Gradient
         self.dinputs = self.dinputs / samples
 
+# Combined softmax and cross entropy for faster backward step
+class ActivationSoftmax_Loss_CategoricalCrossEntropy:
+    def __init__(self):
+        self.output = None
+        self.dinputs = None
+        self.activation = ActivationSoftmax()
+        self.loss = LossCategoricalCrossEntropy()
+
+
+    def forward(self, inputs, y_true):
+        self.activation.forward(inputs)
+        self.output = self.activation.output
+        return self.loss.calculate(self.output, y_true)
+
+
+    def backward(self, dvalues, y_true):
+        # Number of samples
+        samples = len(dvalues)
+
+        # If labels are one-hot encoded, turn them into discrete values
+        if len(y_true.shape) == 2:
+            y_true = np.argmax(y_true, axis = 1)
+
+        # Copy so we can safely modify
+        self.dinputs = dvalues.copy()
+
+        # Calculate Gradients (Taking advantage of one-hot encoded y-true)
+        self.dinputs[range(samples), y_true] -= 1
+
+        # Normalize
+        self.dinputs /= samples
