@@ -1,7 +1,7 @@
 import numpy as np
 from nnfs.datasets import spiral_data
 
-from p10Optimizers import LayerDense, ActivationReLU, ActivationSoftmax_Loss_CategoricalCrossEntropy, OptimizerSGD
+from buildingBlocks.p10Optimizers import LayerDense, ActivationReLU, ActivationSoftmax_Loss_CategoricalCrossEntropy, OptimizerSGD
 # Dataset
 X , y = spiral_data(samples = 100, classes = 3)
 
