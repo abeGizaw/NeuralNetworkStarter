@@ -1,3 +1,4 @@
+import time
 from abc import abstractmethod
 
 import numpy as np
@@ -8,12 +9,11 @@ class Model:
     def __init__(self):
         self.layers = []
         self.input_layer = None
-
         self.trainable_layers = []
+
         self.accuracy = None
         self.optimizer = None
         self.loss = None
-
         self.softmax_classifier_output = None
         self.output_layer_activation = None
 
@@ -29,6 +29,11 @@ class Model:
 
     # Finalizes the model, setting the next and previous layers
     def finalize(self):
+        """
+        Connects all the layers, setting their next and previous
+        Keeps track of all trainable layers
+        :return:
+        """
         self.input_layer = InputLayer()
         layer_count = len(self.layers)
 
@@ -65,43 +70,120 @@ class Model:
                 ActivationSoftmax_Loss_CategoricalCrossEntropy()
    
 
-    def train(self, X, y, *, epochs = 1, print_every = 1, validation_data = None):
+    def train(self, X, y, *, epochs = 1, print_every = 1, batch_size = None):
+        """
+        :param X: train data inputs (# of inputs x flattened input)
+        :param y: the trained data expected
+        :param epochs: iterations
+        :param batch_size
+        :param print_every
+        :return:
+        """
+        print(f'starting to train\n')
 
         # Initialize accuracy object
         self.accuracy.init(y)
 
+        # Calculate number of steps
+        train_steps = 1
+        if batch_size is not None:
+            # Number of batches being trained
+            train_steps = len(X) // batch_size
+
+            # Add a step for leftover data
+            if train_steps * batch_size < len(X):
+                train_steps += 1
+            print(f'running {len(X)} pieces of data in {train_steps} steps\n')
+
+
         for epoch in range(1, epochs + 1):
-            # Perform the forward pass
-            output = self.forward(X)
+            epoch_time_s = time.time()
+            self.loss.new_pass()
+            self.accuracy.new_pass()
 
-            # Calculate loss
-            loss = self.loss.calculate(output, y)
+            for step in range(train_steps):
+                # Figure out data to train on
+                if batch_size is None:
+                    batch_X = X
+                    batch_y = y
+                else:
+                    batch_X = X[step * batch_size:(step + 1) * batch_size]
+                    batch_y = y[step * batch_size:(step + 1) * batch_size]
 
-            # Get predictions and calculate accuracy
+                train_time_start = time.time()
+
+                # Perform the forward pass
+                output = self.forward(batch_X)
+
+                # Calculate loss
+                loss = self.loss.calculate(output, batch_y)
+
+                # Get predictions and calculate accuracy
+                predictions = self.output_layer_activation.predictions(output)
+                accuracy = self.accuracy.calculate(predictions, batch_y)
+
+                # Backward pass
+                self.backward(output, batch_y)
+
+                for layer in self.trainable_layers:
+                    self.optimizer.update_params(layer)
+
+                total_train_time = time.time() - train_time_start
+                if batch_size is not None and print_every is not None and step % print_every == 0 and step != 0:
+                    print(f'step:{step}, acc:{accuracy:.3f}, loss:{loss:.3f}')
+                    print(f'step took {total_train_time:.2f} seconds')
+
+            total_epoch_time = time.time() - epoch_time_s
+            epoch_data_loss = self.loss.calculate_accumulated()
+            epoch_accuracy = self.accuracy.calculate_accumulated()
+            print(f'epoch:{epoch}, acc:{epoch_accuracy:.3f}, loss:{epoch_data_loss:.3f}')
+            print(f'epoch took {total_epoch_time:.2f} seconds\n')
+
+
+    def validate(self, *, validation_data, batch_size = None, print_every = 100):
+        """
+        :param print_every:
+        :param validation_data: inputs and expected out values
+        :param batch_size
+        :return:
+        """
+        print(f'starting to validate\n')
+
+        self.loss.new_pass()
+        self.accuracy.new_pass()
+        X_val, y_val = validation_data
+
+        validation_steps = 1
+        if batch_size is not None:
+            validation_steps = len(X_val) // batch_size
+            if validation_steps * batch_size < len(X_val):
+                validation_steps += 1
+
+        for step in range(validation_steps):
+            # Figure out data to train on
+            if batch_size is None:
+                batch_X = X_val
+                batch_y = y_val
+            else:
+                batch_X = X_val[step * batch_size:(step + 1) * batch_size]
+                batch_y = y_val[step * batch_size:(step + 1) * batch_size]
+
+            valid_time_s = time.time()
+            output = self.forward(batch_X)
+            loss = self.loss.calculate(output, batch_y)
             predictions = self.output_layer_activation.predictions(output)
-            accuracy = self.accuracy.calculate(predictions, y)
+            accuracy = self.accuracy.calculate(predictions, batch_y)
+            valid_time_e = time.time()
 
-            self.backward(output, y)
+            if batch_size is not None and print_every is not None and step % print_every == 0 and step != 0:
+                print(
+                    f'validation, step:{step}, acc:{accuracy:.3f}, loss:{loss:.3f}'
+                )
+                print(f'step took {valid_time_e - valid_time_s:.2f} seconds\n')
 
-            for layer in self.trainable_layers:
-                self.optimizer.update_params(layer)
-
-            if epoch % print_every == 0:
-                print(f'epoch:{epoch}, acc:{accuracy:.3f}, loss:{loss:.3f}')
-
-        if validation_data is not None:
-
-            # Sample, target
-            X_val, y_val = validation_data
-
-            output = self.forward(X_val)
-            loss = self.loss.calculate(output, y_val)
-            predictions = self.output_layer_activation.predictions(output)
-            accuracy = self.accuracy.calculate(predictions, y_val)
-
-            print(
-                f'validation, acc:{accuracy:.3f}, loss:{loss:.3f}'
-            )
+        validation_loss = self.loss.calculate_accumulated()
+        validation_accuracy = self.accuracy.calculate_accumulated()
+        print(f'final validation - acc:{validation_accuracy}, loss:{validation_loss}')
 
 
     def forward(self, X):
@@ -241,6 +323,8 @@ class ActivationSoftmax:
 class Loss:
     # Used for regularization loss. Not shown atm
     def __init__(self):
+        self.accumulated_count = 0
+        self.accumulated_sum = 0
         self.trainable_layers = None
 
     def remember_trainable_layers(self, trainable_layers):
@@ -249,7 +333,24 @@ class Loss:
     def calculate(self, output, expectedOutput):
         sample_losses = self.forward(output, expectedOutput)
         data_loss = np.mean(sample_losses)
+
+        # For batch/epoch statistics
+        self.accumulated_sum += np.sum(sample_losses)
+        self.accumulated_count += len(sample_losses)
         return data_loss
+
+
+    # Calculate accumulated loss
+    def calculate_accumulated(self):
+        data_loss = self.accumulated_sum / self.accumulated_count
+        return data_loss
+
+
+    # Reset variables for each new epoch
+    def new_pass(self):
+        self.accumulated_count = 0
+        self.accumulated_sum = 0
+
 
     @abstractmethod
     def forward(self, output, expectedOutput):
@@ -332,10 +433,28 @@ class OptimizerSGD:
 
 class Accuracy:
 
+    def __init__(self):
+        self.accumulated_sum = 0
+        self.accumulated_count = 0
+
     def calculate(self, predictions, y):
         comparisons = self.compare(predictions, y)
         accuracy = np.mean(comparisons)
+
+        self.accumulated_sum += np.sum(comparisons)
+        self.accumulated_count += len(comparisons)
         return accuracy
+
+    # Calculate accumulated accuracy
+    def calculate_accumulated(self):
+        accuracy = self.accumulated_sum / self.accumulated_count
+        return accuracy
+
+    # Reset variables for each new epoch
+    def new_pass(self):
+        self.accumulated_count = 0
+        self.accumulated_sum = 0
+
 
     @abstractmethod
     def compare(self, predictions, y):
@@ -344,11 +463,8 @@ class Accuracy:
 
 class AccuracyCategorical(Accuracy):
     def __init__(self, *, binary=False):
+        super().__init__()
         self.binary = binary
-
-    # Does not do anything
-    def init(self, y):
-        pass
 
     # Return a list of true and false values (1s and 0s)
     def compare(self, predictions, y):
